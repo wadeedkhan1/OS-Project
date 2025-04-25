@@ -109,7 +109,7 @@ This C program implements a **voting system** that demonstrates the classic **Re
 ```bash
 gcc OS_Project.c -o voting_system -pthread -lrt
 ```
-###▶️ Run
+### ▶️ Run
 ```bash
 ./voting_system
 ```

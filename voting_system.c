@@ -233,16 +233,16 @@ void cast_vote(int voter_id, int candidate_id) {
     if (log_file != NULL) {
         time_t now;
         struct tm *timeinfo;
-        char timestamp[20];
+        char timestamp[30];
         
         time(&now);
         timeinfo = localtime(&now);
         strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y %H:%M:%S]", timeinfo);
         
-        fprintf(log_file, "%s VoterID: %d voted for %s\n", 
+        fprintf(log_file, "[%s] VoterID: %d voted for %s\n", 
             timestamp, voter_id, voting_data->candidate_names[candidate_id]);
     fflush(log_file);
-}
+    }
 
     writer_exit();
 }

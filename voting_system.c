@@ -30,6 +30,7 @@
  #define SEM_MUTEX "/voting_mutex"
  #define SEM_WRIT "/voting_write"
  #define SEM_READ_COUNT "/voting_read_count"
+ #define SEM_CONSOLE "/voting_console"
  #define LOG_FILE "vote_log.txt"
  
  // Shared memory structure
@@ -47,6 +48,7 @@
  sem_t *mutex = NULL;        // Controls access to read_count
  sem_t *wrt = NULL;          // Controls write access
  sem_t *read_count_sem = NULL; // Controls access to reader count
+ sem_t *console_sem = NULL;  // Controls console output to prevent interleaving
  VotingData *voting_data = NULL;
  int shm_fd = -1;
  FILE *log_file = NULL;
@@ -76,14 +78,16 @@
      sem_unlink(SEM_MUTEX);
      sem_unlink(SEM_WRIT);
      sem_unlink(SEM_READ_COUNT);
+     sem_unlink(SEM_CONSOLE);
      shm_unlink(SHM_NAME);
      
      // Create and initialize semaphores
      mutex = sem_open(SEM_MUTEX, O_CREAT, 0644, 1);
      wrt = sem_open(SEM_WRIT, O_CREAT, 0644, 1);
      read_count_sem = sem_open(SEM_READ_COUNT, O_CREAT, 0644, 1);
+     console_sem = sem_open(SEM_CONSOLE, O_CREAT, 0644, 1);
      
-     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED) {
+     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED || console_sem == SEM_FAILED) {
          perror("Semaphore initialization failed");
          exit(EXIT_FAILURE);
      }
@@ -129,9 +133,11 @@
          sem_close(mutex);
      sem_close(wrt);
      sem_close(read_count_sem);
+     sem_close(console_sem);
          sem_unlink(SEM_MUTEX);
      sem_unlink(SEM_WRIT);
      sem_unlink(SEM_READ_COUNT);
+     sem_unlink(SEM_CONSOLE);
      
      // Clean up shared memory
      if (voting_data != NULL) {
@@ -202,7 +208,10 @@
      // Check if voter has already voted
      for (int i = 0; i < voting_data->voted_count; i++) {
          if (voting_data->voted_ids[i] == voter_id) {
+             // Use console semaphore to prevent interleaved output
+             sem_wait(console_sem);
              printf("❌ Voter ID %d has already voted!\n", voter_id);
+             sem_post(console_sem);
              writer_exit();
              return;
          }
@@ -210,7 +219,10 @@
      
      // Check if candidate exists
      if (candidate_id < 0 || candidate_id >= voting_data->candidate_count) {
+         // Use console semaphore to prevent interleaved output
+         sem_wait(console_sem);
          printf("❌ Invalid candidate ID!\n");
+         sem_post(console_sem);
          writer_exit();
          return;
      }
@@ -224,8 +236,11 @@
          voting_data->voted_ids[voting_data->voted_count++] = voter_id;
      }
      
+     // Use console semaphore to prevent interleaved output
+     sem_wait(console_sem);
      printf("🗳️ Voter %d successfully voted for %s\n", 
             voter_id, voting_data->candidate_names[candidate_id]);
+     sem_post(console_sem);
      
      // Log the vote
      if (log_file != NULL) {
@@ -241,13 +256,16 @@
              timestamp, voter_id, voting_data->candidate_names[candidate_id]);
      fflush(log_file);
      }
- 
+
      writer_exit();
  }
  
  // View voting results
  void view_results() {
      reader_enter();
+     
+     // Acquire the console semaphore to prevent interleaved output
+     sem_wait(console_sem);
      
      printf("\n📊 === Current Vote Count ===\n");
      printf("Total votes: %d\n", voting_data->total_votes);
@@ -262,6 +280,9 @@
                 percentage);
      }
      printf("===========================\n");
+     
+     // Release the console semaphore
+     sem_post(console_sem);
      
      reader_exit();
  }
@@ -300,10 +321,25 @@
              // Get candidate names
              for (int i = 0; i < voting_data->candidate_count; i++) {
                  printf("Enter name for candidate %d: ", i);
-                 if (scanf("%49s", voting_data->candidate_names[i]) != 1) {
-                     printf("⚠️ Invalid input. Using default name.\n");
+                 if (fgets(input_buffer, sizeof(input_buffer), stdin) != NULL) {
+                     // Remove trailing newline if present
+                     size_t len = strlen(input_buffer);
+                     if (len > 0 && input_buffer[len - 1] == '\n') {
+                         input_buffer[len - 1] = '\0';
+                     }
+                     
+                     // Check if input is empty
+                     if (strlen(input_buffer) == 0) {
+                         printf("⚠️ Empty name. Using default name.\n");
+                         sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
+                     } else {
+                         // Copy with length limit to prevent buffer overflow
+                         strncpy(voting_data->candidate_names[i], input_buffer, MAX_NAME_LENGTH-1);
+                         voting_data->candidate_names[i][MAX_NAME_LENGTH-1] = '\0'; // Ensure null termination
+                     }
+                 } else {
+                     printf("⚠️ Input error. Using default name.\n");
                      sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
-                     while (getchar() != '\n');
                  }
              }
          }
@@ -387,8 +423,13 @@
      free(arg);
      
      sleep(sleep_time);
+     
+     // Use console semaphore to prevent interleaved output
+     sem_wait(console_sem);
      printf("[Thread %d] Voter %d voting for %s\n", (int)pthread_self(), 
             voter_id, voting_data->candidate_names[candidate_id]);
+     sem_post(console_sem);
+     
      cast_vote(voter_id, candidate_id);
      
      return NULL;
@@ -408,13 +449,21 @@
          sleep_time = rand() % 3 + 1;
          sleep(sleep_time);
          
+         // Use console semaphore to prevent interleaved output
+         sem_wait(console_sem);
          printf("[Thread %d] Reading current vote count...\n", (int)pthread_self());
+         sem_post(console_sem);
+         
          view_results();
          
          iterations++;
      }
      
+     // Use console semaphore to prevent interleaved output
+     sem_wait(console_sem);
      printf("[Thread %d] Observer %d finished observing.\n", (int)pthread_self(), observer_id);
+     sem_post(console_sem);
+     
      return NULL;
  }
  
@@ -426,11 +475,16 @@
      int *voter_ids;
      int *observer_ids;
      clock_t start, end;
+     char input_buffer[256];  // Buffer for input
      
      // Initialize candidates
      printf("\n👥 Setup Candidates\n");
      printf("Enter the number of candidates (max %d): ", MAX_CANDIDATES);
      scanf("%d", &voting_data->candidate_count);
+     
+     // Clear input buffer
+     while (getchar() != '\n');
+     
      if (voting_data->candidate_count <= 0 || voting_data->candidate_count > MAX_CANDIDATES) {
          printf("⚠️ Invalid number. Using default (3 candidates).\n");
          voting_data->candidate_count = 3;
@@ -440,22 +494,59 @@
      } else {
          for (int i = 0; i < voting_data->candidate_count; i++) {
              printf("Enter name for candidate %d: ", i);
-             scanf("%s", voting_data->candidate_names[i]);
+             if (fgets(input_buffer, sizeof(input_buffer), stdin) != NULL) {
+                 // Remove trailing newline if present
+                 size_t len = strlen(input_buffer);
+                 if (len > 0 && input_buffer[len - 1] == '\n') {
+                     input_buffer[len - 1] = '\0';
+                 }
+                 
+                 // Check if input is empty
+                 if (strlen(input_buffer) == 0) {
+                     printf("⚠️ Empty name. Using default name.\n");
+                     sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
+                 } else {
+                     // Copy with length limit to prevent buffer overflow
+                     strncpy(voting_data->candidate_names[i], input_buffer, MAX_NAME_LENGTH-1);
+                     voting_data->candidate_names[i][MAX_NAME_LENGTH-1] = '\0'; // Ensure null termination
+                 }
+             } else {
+                 printf("⚠️ Input error. Using default name.\n");
+                 sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
+             }
          }
      }
      
      printf("Enter number of voters to simulate (max %d): ", MAX_VOTERS);
-     scanf("%d", &num_voters);
-     if (num_voters <= 0 || num_voters > MAX_VOTERS) {
+     if (scanf("%d", &num_voters) != 1) {
          printf("⚠️ Invalid number. Using default (10 voters).\n");
          num_voters = 10;
+         // Clear input buffer
+         while (getchar() != '\n');
+     } else {
+         // Check range and clear input buffer
+         if (num_voters <= 0 || num_voters > MAX_VOTERS) {
+             printf("⚠️ Invalid number. Using default (10 voters).\n");
+             num_voters = 10;
+         }
+         // Clear input buffer
+         while (getchar() != '\n');
      }
      
      printf("Enter number of observers to simulate (max %d): ", MAX_OBSERVERS);
-     scanf("%d", &num_observers);
-     if (num_observers <= 0 || num_observers > MAX_OBSERVERS) {
+     if (scanf("%d", &num_observers) != 1) {
          printf("⚠️ Invalid number. Using default (3 observers).\n");
          num_observers = 3;
+         // Clear input buffer
+         while (getchar() != '\n');
+     } else {
+         // Check range and clear input buffer
+         if (num_observers <= 0 || num_observers > MAX_OBSERVERS) {
+             printf("⚠️ Invalid number. Using default (3 observers).\n");
+             num_observers = 3;
+         }
+         // Clear input buffer
+         while (getchar() != '\n');
      }
      
      // Dynamically allocate arrays
@@ -545,8 +636,8 @@
  void run_voter_process(int voter_id) {
      // Re-map the shared memory
      voting_data = (VotingData *)mmap(NULL, sizeof(VotingData), 
-                                    PROT_READ | PROT_WRITE, 
-                                    MAP_SHARED, shm_fd, 0);
+                                   PROT_READ | PROT_WRITE, 
+                                   MAP_SHARED, shm_fd, 0);
      
      if (voting_data == MAP_FAILED) {
          perror("Memory mapping failed in voter process");
@@ -557,8 +648,9 @@
      mutex = sem_open(SEM_MUTEX, 0);
      wrt = sem_open(SEM_WRIT, 0);
      read_count_sem = sem_open(SEM_READ_COUNT, 0);
+     console_sem = sem_open(SEM_CONSOLE, 0);
      
-     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED) {
+     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED || console_sem == SEM_FAILED) {
          perror("Semaphore opening failed in voter process");
          exit(EXIT_FAILURE);
      }
@@ -575,14 +667,20 @@
      
      // Cast a vote for a random candidate
      int candidate_id = rand() % voting_data->candidate_count;
+     
+     // Use console semaphore to prevent interleaved output
+     sem_wait(console_sem);
      printf("[Process %d] Voter %d voting for %s\n", getpid(), 
             voter_id, voting_data->candidate_names[candidate_id]);
+     sem_post(console_sem);
+     
      cast_vote(voter_id, candidate_id);
      
      // Clean up local resources only
      sem_close(mutex);
      sem_close(wrt);
      sem_close(read_count_sem);
+     sem_close(console_sem);
      munmap(voting_data, sizeof(VotingData));
      
      exit(EXIT_SUCCESS);
@@ -592,8 +690,8 @@
  void run_observer_process() {
      // Re-map the shared memory
      voting_data = (VotingData *)mmap(NULL, sizeof(VotingData), 
-                                    PROT_READ | PROT_WRITE, 
-                                    MAP_SHARED, shm_fd, 0);
+                                   PROT_READ | PROT_WRITE, 
+                                   MAP_SHARED, shm_fd, 0);
      
      if (voting_data == MAP_FAILED) {
          perror("Memory mapping failed in observer process");
@@ -604,8 +702,9 @@
      mutex = sem_open(SEM_MUTEX, 0);
      wrt = sem_open(SEM_WRIT, 0);
      read_count_sem = sem_open(SEM_READ_COUNT, 0);
+     console_sem = sem_open(SEM_CONSOLE, 0);
      
-     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED) {
+     if (mutex == SEM_FAILED || wrt == SEM_FAILED || read_count_sem == SEM_FAILED || console_sem == SEM_FAILED) {
          perror("Semaphore opening failed in observer process");
          exit(EXIT_FAILURE);
      }
@@ -620,7 +719,12 @@
      for (int i = 0; i < 5; i++) {
          int sleep_time = rand() % 2 + 1;
          sleep(sleep_time);
+         
+         // Use console semaphore to prevent interleaved output
+         sem_wait(console_sem);
          printf("[Process %d] Reading votes...\n", getpid());
+         sem_post(console_sem);
+         
          view_results();
      }
      
@@ -628,9 +732,14 @@
      sem_close(mutex);
      sem_close(wrt);
      sem_close(read_count_sem);
+     sem_close(console_sem);
      munmap(voting_data, sizeof(VotingData));
      
+     // Use console semaphore for final message
+     sem_wait(console_sem);
      printf("[Process %d] Observer finished observing.\n", getpid());
+     sem_post(console_sem);
+     
      exit(EXIT_SUCCESS);
  }
  
@@ -640,11 +749,16 @@
      pid_t *voter_pids;
      pid_t *observer_pids;
      clock_t start, end;
+     char input_buffer[256];  // Buffer for input
      
      // Initialize candidates
      printf("\n👥 Setup Candidates\n");
      printf("Enter the number of candidates (max %d): ", MAX_CANDIDATES);
      scanf("%d", &voting_data->candidate_count);
+     
+     // Clear input buffer
+     while (getchar() != '\n');
+     
      if (voting_data->candidate_count <= 0 || voting_data->candidate_count > MAX_CANDIDATES) {
          printf("⚠️ Invalid number. Using default (3 candidates).\n");
          voting_data->candidate_count = 3;
@@ -654,22 +768,59 @@
      } else {
          for (int i = 0; i < voting_data->candidate_count; i++) {
              printf("Enter name for candidate %d: ", i);
-             scanf("%s", voting_data->candidate_names[i]);
+             if (fgets(input_buffer, sizeof(input_buffer), stdin) != NULL) {
+                 // Remove trailing newline if present
+                 size_t len = strlen(input_buffer);
+                 if (len > 0 && input_buffer[len - 1] == '\n') {
+                     input_buffer[len - 1] = '\0';
+                 }
+                 
+                 // Check if input is empty
+                 if (strlen(input_buffer) == 0) {
+                     printf("⚠️ Empty name. Using default name.\n");
+                     sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
+                 } else {
+                     // Copy with length limit to prevent buffer overflow
+                     strncpy(voting_data->candidate_names[i], input_buffer, MAX_NAME_LENGTH-1);
+                     voting_data->candidate_names[i][MAX_NAME_LENGTH-1] = '\0'; // Ensure null termination
+                 }
+             } else {
+                 printf("⚠️ Input error. Using default name.\n");
+                 sprintf(voting_data->candidate_names[i], "Candidate %d", i+1);
+             }
          }
      }
      
      printf("Enter number of voters to simulate (max %d): ", MAX_VOTERS);
-     scanf("%d", &num_voters);
-     if (num_voters <= 0 || num_voters > MAX_VOTERS) {
+     if (scanf("%d", &num_voters) != 1) {
          printf("⚠️ Invalid number. Using default (10 voters).\n");
          num_voters = 10;
+         // Clear input buffer
+         while (getchar() != '\n');
+     } else {
+         // Check range and clear input buffer
+         if (num_voters <= 0 || num_voters > MAX_VOTERS) {
+             printf("⚠️ Invalid number. Using default (10 voters).\n");
+             num_voters = 10;
+         }
+         // Clear input buffer
+         while (getchar() != '\n');
      }
      
      printf("Enter number of observers to simulate (max %d): ", MAX_OBSERVERS);
-     scanf("%d", &num_observers);
-     if (num_observers <= 0 || num_observers > MAX_OBSERVERS) {
+     if (scanf("%d", &num_observers) != 1) {
          printf("⚠️ Invalid number. Using default (3 observers).\n");
          num_observers = 3;
+         // Clear input buffer
+         while (getchar() != '\n');
+     } else {
+         // Check range and clear input buffer
+         if (num_observers <= 0 || num_observers > MAX_OBSERVERS) {
+             printf("⚠️ Invalid number. Using default (3 observers).\n");
+             num_observers = 3;
+         }
+         // Clear input buffer
+         while (getchar() != '\n');
      }
      
      // Dynamically allocate arrays

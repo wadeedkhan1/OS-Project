@@ -52,6 +52,7 @@
  VotingData *voting_data = NULL;
  int shm_fd = -1;
  FILE *log_file = NULL;
+ char log_filename[100];    // To store the unique log filename
  
  // Function prototypes
  void initialize_resources();
@@ -71,6 +72,38 @@
  void run_voter_process(int voter_id);
  void run_observer_process();
  void print_performance_comparison();
+ void create_log_file(const char *mode);
+ 
+ // Function to create a timestamped log filename and open the log file
+ void create_log_file(const char *mode) {
+     time_t now;
+     struct tm *timeinfo;
+     char timestamp[30];
+     
+     time(&now);
+    strftime(timestamp, sizeof(timestamp), "%d-%m-%Y_%H-%M-%S", localtime(&now));
+     
+     // Create a unique filename with timestamp in square brackets and mode
+     snprintf(log_filename, sizeof(log_filename), "vote_log_[%s]_%s.txt", timestamp, mode);
+
+     
+     // Open log file
+     log_file = fopen(log_filename, "w");
+     if (log_file == NULL) {
+         perror("Failed to open log file");
+         exit(EXIT_FAILURE);
+     }
+     
+     // Write header information
+     fprintf(log_file, "=================================================\n");
+     fprintf(log_file, "VOTING SESSION LOG - %s MODE\n", mode);
+     fprintf(log_file, "=================================================\n");
+     fprintf(log_file, "Session started at: %s\n", ctime(&now));
+     fprintf(log_file, "System information: %s\n", "Synchronized Voting System");
+     fprintf(log_file, "-------------------------------------------------\n\n");
+     fprintf(log_file, "VOTING RECORD:\n\n");
+     fflush(log_file);
+ }
  
  // Initialize semaphores and shared memory
  void initialize_resources() {
@@ -116,25 +149,51 @@
      // Initialize voting data
      memset(voting_data, 0, sizeof(VotingData));
  
-     // Open log file
-     log_file = fopen(LOG_FILE, "a");
-     if (log_file == NULL) {
-         perror("Failed to open log file");
-         exit(EXIT_FAILURE);
-     }
- 
      // Set up signal handler
      signal(SIGINT, handle_signal);
  }
  
  // Clean up resources
  void cleanup_resources() {
+     // Write summary to log file if it exists
+     if (log_file != NULL) {
+         time_t now;
+         time(&now);
+         
+         fprintf(log_file, "\n-------------------------------------------------\n");
+         fprintf(log_file, "VOTING SESSION SUMMARY\n");
+         fprintf(log_file, "-------------------------------------------------\n");
+         fprintf(log_file, "Session ended at: %s", ctime(&now));
+         fprintf(log_file, "Total votes cast: %d\n\n", voting_data->total_votes);
+         
+         fprintf(log_file, "FINAL RESULTS:\n");
+         for (int i = 0; i < voting_data->candidate_count; i++) {
+             float percentage = voting_data->total_votes > 0 ? 
+                 (float)voting_data->votes[i] / voting_data->total_votes * 100 : 0;
+             
+             fprintf(log_file, "• %s: %d votes (%.1f%%)\n", 
+                    voting_data->candidate_names[i], 
+                    voting_data->votes[i],
+                    percentage);
+         }
+         
+         fprintf(log_file, "\n=================================================\n");
+         fprintf(log_file, "END OF VOTING SESSION LOG\n");
+         fprintf(log_file, "=================================================\n");
+         
+         // Close log file
+         fclose(log_file);
+         log_file = NULL;
+         
+         printf("Voting log saved to: %s\n", log_filename);
+     }
+
      // Close and unlink semaphores
-         sem_close(mutex);
+     sem_close(mutex);
      sem_close(wrt);
      sem_close(read_count_sem);
      sem_close(console_sem);
-         sem_unlink(SEM_MUTEX);
+     sem_unlink(SEM_MUTEX);
      sem_unlink(SEM_WRIT);
      sem_unlink(SEM_READ_COUNT);
      sem_unlink(SEM_CONSOLE);
@@ -147,11 +206,6 @@
      if (shm_fd != -1) {
          close(shm_fd);
          shm_unlink(SHM_NAME);
-     }
-     
-     // Close log file
-     if (log_file != NULL) {
-         fclose(log_file);
      }
      
      printf("\nResources cleaned up successfully\n");
@@ -212,6 +266,22 @@
              sem_wait(console_sem);
              printf("❌ Voter ID %d has already voted!\n", voter_id);
              sem_post(console_sem);
+             
+             // Log failed vote attempt
+             if (log_file != NULL) {
+                 time_t now;
+                 struct tm *timeinfo;
+                 char timestamp[30];
+                 
+                 time(&now);
+                 timeinfo = localtime(&now);
+                 strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y %H:%M:%S]", timeinfo);
+                 
+                 fprintf(log_file, "%s FAILED VOTE: VoterID %d attempted to vote again\n", 
+                     timestamp, voter_id);
+                 fflush(log_file);
+             }
+             
              writer_exit();
              return;
          }
@@ -223,6 +293,22 @@
          sem_wait(console_sem);
          printf("❌ Invalid candidate ID!\n");
          sem_post(console_sem);
+         
+         // Log invalid candidate attempt
+         if (log_file != NULL) {
+             time_t now;
+             struct tm *timeinfo;
+             char timestamp[30];
+             
+             time(&now);
+             timeinfo = localtime(&now);
+             strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y %H:%M:%S]", timeinfo);
+             
+             fprintf(log_file, "%s INVALID VOTE: VoterID %d attempted to vote for invalid candidate ID %d\n", 
+                 timestamp, voter_id, candidate_id);
+             fflush(log_file);
+         }
+         
          writer_exit();
          return;
      }
@@ -242,7 +328,7 @@
             voter_id, voting_data->candidate_names[candidate_id]);
      sem_post(console_sem);
      
-     // Log the vote
+     // Log the vote with more details
      if (log_file != NULL) {
          time_t now;
          struct tm *timeinfo;
@@ -252,9 +338,9 @@
          timeinfo = localtime(&now);
          strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y %H:%M:%S]", timeinfo);
          
-         fprintf(log_file, "[%s] VoterID: %d voted for %s\n", 
-             timestamp, voter_id, voting_data->candidate_names[candidate_id]);
-     fflush(log_file);
+         fprintf(log_file, "%s SUCCESS: VoterID %d voted for Candidate '%s' (ID: %d)\n", 
+             timestamp, voter_id, voting_data->candidate_names[candidate_id], candidate_id);
+         fflush(log_file);
      }
 
      writer_exit();
@@ -289,6 +375,9 @@
  
  // Manual mode - interactive CLI
  void manual_mode() {
+     // Create a log file for this session
+     create_log_file("Manual");
+     
      int choice, voter_id, candidate_id;
      char candidate_name[MAX_NAME_LENGTH];
      char input_buffer[256];  // Buffer for input validation
@@ -344,6 +433,17 @@
              }
          }
      }
+     
+     // Log the candidates setup
+     fprintf(log_file, "CANDIDATE SETUP:\n");
+     for (int i = 0; i < voting_data->candidate_count; i++) {
+         fprintf(log_file, "Candidate %d: %s\n", i, voting_data->candidate_names[i]);
+     }
+     fprintf(log_file, "\n");
+     fprintf(log_file, "MODE DETAILS: Manual interactive mode\n");
+     fprintf(log_file, "INTERACTION: User-driven via CLI\n\n");
+     fprintf(log_file, "-------------------------------------------------\n\n");
+     fflush(log_file);
      
      // Main menu loop
      while (1) {
@@ -469,6 +569,9 @@
  
  // Thread mode - fix deadlock and resource management
  void thread_mode() {
+     // Create a log file for this session
+     create_log_file("Thread");
+     
      int num_voters, num_observers;
      pthread_t *voter_threads;
      pthread_t *observer_threads;
@@ -549,6 +652,19 @@
          while (getchar() != '\n');
      }
      
+     // After initializing candidates and getting voter/observer counts
+     // Log the thread mode setup details
+     fprintf(log_file, "CANDIDATE SETUP:\n");
+     for (int i = 0; i < voting_data->candidate_count; i++) {
+         fprintf(log_file, "Candidate %d: %s\n", i, voting_data->candidate_names[i]);
+     }
+     fprintf(log_file, "\n");
+     fprintf(log_file, "MODE DETAILS: Thread simulation mode\n");
+     fprintf(log_file, "CONFIGURATION: %d voters, %d observers\n", num_voters, num_observers);
+     fprintf(log_file, "IMPLEMENTATION: Using POSIX threads (pthread)\n\n");
+     fprintf(log_file, "-------------------------------------------------\n\n");
+     fflush(log_file);
+     
      // Dynamically allocate arrays
      voter_threads = malloc(num_voters * sizeof(pthread_t));
      observer_threads = malloc(num_observers * sizeof(pthread_t));
@@ -611,6 +727,11 @@
      for (int i = 0; i < num_observers; i++) {
          pthread_join(observer_threads[i], NULL);
      }
+     
+     // Add timing information to log
+     fprintf(log_file, "EXECUTION STATISTICS:\n");
+     fprintf(log_file, "Total execution time: %.2f seconds\n\n", elapsed_time);
+     fflush(log_file);
      
      printf("\n⏱️ Thread mode completed in %.2f seconds\n", elapsed_time);
      printf("Performance data saved for comparison\n");
@@ -745,6 +866,9 @@
  
  // Process mode - fix potential deadlock issues
  void process_mode() {
+     // Create a log file for this session
+     create_log_file("Process");
+     
      int num_voters, num_observers;
      pid_t *voter_pids;
      pid_t *observer_pids;
@@ -823,6 +947,20 @@
          while (getchar() != '\n');
      }
      
+     // After initializing candidates and getting voter/observer counts
+     // Log the process mode setup details
+     fprintf(log_file, "CANDIDATE SETUP:\n");
+     for (int i = 0; i < voting_data->candidate_count; i++) {
+         fprintf(log_file, "Candidate %d: %s\n", i, voting_data->candidate_names[i]);
+     }
+     fprintf(log_file, "\n");
+     fprintf(log_file, "MODE DETAILS: Process simulation mode\n");
+     fprintf(log_file, "CONFIGURATION: %d voters, %d observers\n", num_voters, num_observers);
+     fprintf(log_file, "IMPLEMENTATION: Using fork() for separate processes\n");
+     fprintf(log_file, "SYNCHRONIZATION: Shared memory and POSIX semaphores\n\n");
+     fprintf(log_file, "-------------------------------------------------\n\n");
+     fflush(log_file);
+     
      // Dynamically allocate arrays
      voter_pids = malloc(num_voters * sizeof(pid_t));
      observer_pids = malloc(num_observers * sizeof(pid_t));
@@ -896,6 +1034,11 @@
      
      end = clock();
      double elapsed_time = ((double)(end - start)) / CLOCKS_PER_SEC;
+     
+     // Add timing information to log
+     fprintf(log_file, "EXECUTION STATISTICS:\n");
+     fprintf(log_file, "Total execution time: %.2f seconds\n\n", elapsed_time);
+     fflush(log_file);
      
      printf("\n⏱️ Process mode completed in %.2f seconds\n", elapsed_time);
      printf("Performance data saved for comparison\n");

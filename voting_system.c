@@ -1,12 +1,3 @@
-/**
- * Synchronized Voting System - Implementation of Readers-Writers Problem
- * 
- * This program implements a voting system with three modes:
- * 1. Manual Mode: Interactive CLI for voting/viewing results
- * 2. Thread Mode: Simulates concurrent voters/observers using threads
- * 3. Process Mode: Simulates voters/observers as separate processes
- */
-
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
@@ -21,6 +12,7 @@
  #include <errno.h>
  #include <sys/wait.h>
  #include <stdbool.h>
+ #include <math.h>
  
  #define MAX_CANDIDATES 10
  #define MAX_VOTERS 1000
@@ -73,6 +65,7 @@
  void run_observer_process();
  void print_performance_comparison();
  void create_log_file(const char *mode);
+ void initialize_performance_file();
  
  // Function to create a timestamped log filename and open the log file
  void create_log_file(const char *mode) {
@@ -103,6 +96,35 @@
      fprintf(log_file, "-------------------------------------------------\n\n");
      fprintf(log_file, "VOTING RECORD:\n\n");
      fflush(log_file);
+ }
+ 
+ // Function to initialize performance data file if it doesn't exist
+ void initialize_performance_file() {
+     FILE *perf_file = fopen("performance_data.txt", "r");
+     if (perf_file) {
+         // File already exists, no need to initialize
+         fclose(perf_file);
+         return;
+     }
+     
+     // Create new performance data file with header
+     perf_file = fopen("performance_data.txt", "w");
+     if (perf_file == NULL) {
+         perror("Failed to create performance data file");
+         return;
+     }
+     
+     time_t now;
+     time(&now);
+     
+     fprintf(perf_file, "=================================================\n");
+     fprintf(perf_file, "VOTING SYSTEM PERFORMANCE DATA\n");
+     fprintf(perf_file, "=================================================\n");
+     fprintf(perf_file, "File created: %s", ctime(&now));
+     fprintf(perf_file, "\n");
+     fprintf(perf_file, "Format: [Timestamp] Mode: voters, observers, seconds, sec/voter, sec/observer\n");
+     fprintf(perf_file, "-------------------------------------------------\n\n");
+     fclose(perf_file);
  }
  
  // Initialize semaphores and shared memory
@@ -736,10 +758,23 @@
      printf("\n⏱️ Thread mode completed in %.2f seconds\n", elapsed_time);
      printf("Performance data saved for comparison\n");
      
+     // Calculate per-voter and per-observer metrics
+     double time_per_voter = num_voters > 0 ? elapsed_time / num_voters : 0;
+     double time_per_observer = num_observers > 0 ? elapsed_time / num_observers : 0;
+     
+     // Get current timestamp
+     time_t now;
+     struct tm *timeinfo;
+     char timestamp[30];
+     
+     time(&now);
+     timeinfo = localtime(&now);
+     strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y_%H-%M-%S]", timeinfo);
+     
      FILE *perf_file = fopen("performance_data.txt", "a");
      if (perf_file) {
-         fprintf(perf_file, "Thread mode: %d voters, %d observers, %.2f seconds\n", 
-                 num_voters, num_observers, elapsed_time);
+         fprintf(perf_file, "%s Thread mode: %d voters, %d observers, %.6f seconds, %.6f sec/voter, %.6f sec/observer\n", 
+                 timestamp, num_voters, num_observers, elapsed_time, time_per_voter, time_per_observer);
          fclose(perf_file);
      }
      
@@ -1043,10 +1078,23 @@
      printf("\n⏱️ Process mode completed in %.2f seconds\n", elapsed_time);
      printf("Performance data saved for comparison\n");
      
+     // Calculate per-voter and per-observer metrics
+     double time_per_voter = num_voters > 0 ? elapsed_time / num_voters : 0;
+     double time_per_observer = num_observers > 0 ? elapsed_time / num_observers : 0;
+     
+     // Get current timestamp
+     time_t now;
+     struct tm *timeinfo;
+     char timestamp[30];
+     
+     time(&now);
+     timeinfo = localtime(&now);
+     strftime(timestamp, sizeof(timestamp), "[%d-%m-%Y_%H-%M-%S]", timeinfo);
+     
      FILE *perf_file = fopen("performance_data.txt", "a");
      if (perf_file) {
-         fprintf(perf_file, "Process mode: %d voters, %d observers, %.2f seconds\n", 
-                 num_voters, num_observers, elapsed_time);
+         fprintf(perf_file, "%s Process mode: %d voters, %d observers, %.6f seconds, %.6f sec/voter, %.6f sec/observer\n", 
+                 timestamp, num_voters, num_observers, elapsed_time, time_per_voter, time_per_observer);
          fclose(perf_file);
      }
      
@@ -1060,55 +1108,287 @@
  
  // Print comparison of thread vs process performance
  void print_performance_comparison() {
-     FILE *perf_file = fopen("performance_data.txt", "r");
-     if (!perf_file) {
-         printf("No performance data available yet.\n");
+     // Create a log file specifically for this comparison
+     char comparison_log[100];
+     time_t now;
+     struct tm *timeinfo;
+     char timestamp[30];
+     
+     time(&now);
+     timeinfo = localtime(&now);
+     strftime(timestamp, sizeof(timestamp), "%d-%m-%Y_%H-%M-%S", timeinfo);
+     snprintf(comparison_log, sizeof(comparison_log), "performance_report_[%s].txt", timestamp);
+     
+     FILE *report_file = fopen(comparison_log, "w");
+     if (!report_file) {
+         perror("Failed to create performance report file");
          return;
      }
      
-     double thread_time = 0.0, process_time = 0.0;
-     int thread_voters = 0, thread_observers = 0;
-     int process_voters = 0, process_observers = 0;
-     char line[256];
+     // Open the performance data file
+     FILE *perf_file = fopen("performance_data.txt", "r");
+     if (!perf_file) {
+         printf("No performance data available yet.\n");
+         fprintf(report_file, "No performance data available yet.\n");
+         fclose(report_file);
+         return;
+     }
      
+     // Write report header
+     fprintf(report_file, "=================================================\n");
+     fprintf(report_file, "PERFORMANCE ANALYSIS REPORT\n");
+     fprintf(report_file, "=================================================\n");
+     fprintf(report_file, "Report generated at: %s", ctime(&now));
+     fprintf(report_file, "\n");
+     fprintf(report_file, "System information: Synchronized Voting System\n");
+     fprintf(report_file, "-------------------------------------------------\n\n");
+     fprintf(report_file, "PERFORMANCE DATA:\n\n");
+     
+     // Copy the full performance data file into the report
+     char line[512];
+     rewind(perf_file);
      while (fgets(line, sizeof(line), perf_file)) {
-         if (strstr(line, "Thread mode:")) {
-             sscanf(line, "Thread mode: %d voters, %d observers, %lf seconds", 
-                   &thread_voters, &thread_observers, &thread_time);
-         } else if (strstr(line, "Process mode:")) {
-             sscanf(line, "Process mode: %d voters, %d observers, %lf seconds", 
-                   &process_voters, &process_observers, &process_time);
+         fprintf(report_file, "%s", line);
+     }
+     fprintf(report_file, "\n");
+     
+     // Structure to store data
+     typedef struct {
+         int voters;
+         int observers;
+         double total_time;
+         double per_voter_time;
+         double per_observer_time;
+     } RunData;
+     
+     // Arrays to store data from each mode
+     RunData thread_runs[100] = {0};    // Assuming no more than 100 runs
+     RunData process_runs[100] = {0};
+     int thread_count = 0;
+     int process_count = 0;
+     
+     // Reset to beginning of file
+     rewind(perf_file);
+     
+     // Parse each line of the performance data
+     while (fgets(line, sizeof(line), perf_file)) {
+         // Skip header lines
+         if (strstr(line, "Thread mode:") == NULL && strstr(line, "Process mode:") == NULL) {
+             continue;
+         }
+         
+         // Variables to extract data
+         int voters, observers;
+         double time, per_voter, per_observer;
+         char mode_type[20];
+         
+         // Try to parse the newer format with per-voter and per-observer metrics
+         if (strstr(line, "sec/voter")) {
+             if (sscanf(line, "%*s %[^:]: %d voters, %d observers, %lf seconds, %lf sec/voter, %lf sec/observer",
+                     mode_type, &voters, &observers, &time, &per_voter, &per_observer) != 6) {
+                 continue; // Skip if not in expected format
+             }
+         } else {
+             // Try to parse older format without per-voter and per-observer metrics
+             if (sscanf(line, "%*s %[^:]: %d voters, %d observers, %lf seconds",
+                     mode_type, &voters, &observers, &time) != 4) {
+                 continue; // Skip if not in expected format
+             }
+             // Calculate per-voter and per-observer metrics
+             per_voter = voters > 0 ? time / voters : 0;
+             per_observer = observers > 0 ? time / observers : 0;
+         }
+         
+         // Store data in appropriate array
+         if (strstr(mode_type, "Thread") != NULL) {
+             thread_runs[thread_count].voters = voters;
+             thread_runs[thread_count].observers = observers;
+             thread_runs[thread_count].total_time = time;
+             thread_runs[thread_count].per_voter_time = per_voter;
+             thread_runs[thread_count].per_observer_time = per_observer;
+             thread_count++;
+         } else if (strstr(mode_type, "Process") != NULL) {
+             process_runs[process_count].voters = voters;
+             process_runs[process_count].observers = observers;
+             process_runs[process_count].total_time = time;
+             process_runs[process_count].per_voter_time = per_voter;
+             process_runs[process_count].per_observer_time = per_observer;
+             process_count++;
          }
      }
      
      fclose(perf_file);
      
-     printf("\n== Comparing Threads and Processes ==\n");
-     printf("[Threads] Execution Time: %.3fs\n", thread_time);
-     printf("[Processes] Execution Time: %.3fs\n", process_time);
+     // If no data found, report error
+     if (thread_count == 0 && process_count == 0) {
+         fprintf(report_file, "\nNo valid performance data found in the expected format.\n");
+         printf("No valid performance data found.\n");
+         fclose(report_file);
+         return;
+     }
      
-     if (thread_time > 0 && process_time > 0) {
-         if (thread_time < process_time) {
-             printf("Threads were faster by %.3fs (%.1f%%)\n", 
-                    process_time - thread_time, 
-                    (process_time - thread_time) / process_time * 100);
-         } else if (process_time < thread_time) {
-             printf("Processes were faster by %.3fs (%.1f%%)\n", 
-                    thread_time - process_time, 
-                    (thread_time - process_time) / thread_time * 100);
+     // Compute aggregates for thread mode
+     int total_thread_voters = 0;
+     int total_thread_observers = 0;
+     double total_thread_time = 0.0;
+     double sum_thread_per_voter = 0.0;
+     double sum_thread_per_observer = 0.0;
+     
+     for (int i = 0; i < thread_count; i++) {
+         total_thread_voters += thread_runs[i].voters;
+         total_thread_observers += thread_runs[i].observers;
+         total_thread_time += thread_runs[i].total_time;
+         sum_thread_per_voter += thread_runs[i].per_voter_time * thread_runs[i].voters; // Weighted sum
+         sum_thread_per_observer += thread_runs[i].per_observer_time * thread_runs[i].observers; // Weighted sum
+     }
+     
+     // Compute average per-voter and per-observer times for thread mode
+     double avg_thread_per_voter = total_thread_voters > 0 ? 
+         sum_thread_per_voter / total_thread_voters : 0;
+     double avg_thread_per_observer = total_thread_observers > 0 ? 
+         sum_thread_per_observer / total_thread_observers : 0;
+     
+     // Compute aggregates for process mode
+     int total_process_voters = 0;
+     int total_process_observers = 0;
+     double total_process_time = 0.0;
+     double sum_process_per_voter = 0.0;
+     double sum_process_per_observer = 0.0;
+     
+     for (int i = 0; i < process_count; i++) {
+         total_process_voters += process_runs[i].voters;
+         total_process_observers += process_runs[i].observers;
+         total_process_time += process_runs[i].total_time;
+         sum_process_per_voter += process_runs[i].per_voter_time * process_runs[i].voters; // Weighted sum
+         sum_process_per_observer += process_runs[i].per_observer_time * process_runs[i].observers; // Weighted sum
+     }
+     
+     // Compute average per-voter and per-observer times for process mode
+     double avg_process_per_voter = total_process_voters > 0 ? 
+         sum_process_per_voter / total_process_voters : 0;
+     double avg_process_per_observer = total_process_observers > 0 ? 
+         sum_process_per_observer / total_process_observers : 0;
+     
+     // Write analysis section
+     fprintf(report_file, "-------------------------------------------------\n");
+     fprintf(report_file, "PERFORMANCE ANALYSIS\n");
+     fprintf(report_file, "-------------------------------------------------\n");
+     fprintf(report_file, "Total measurements: %d (Thread mode: %d, Process mode: %d)\n\n", 
+             thread_count + process_count, thread_count, process_count);
+     
+     // Thread mode analysis
+     if (thread_count > 0) {
+         fprintf(report_file, "Thread Mode Analysis:\n");
+         fprintf(report_file, "• Total number of voters: %d\n", total_thread_voters);
+         fprintf(report_file, "• Total number of observers: %d\n", total_thread_observers);
+         fprintf(report_file, "• Total execution time: %.6f seconds\n", total_thread_time);
+         fprintf(report_file, "• Average time per voter: %.6f seconds\n", avg_thread_per_voter);
+         fprintf(report_file, "• Average time per observer: %.6f seconds\n\n", avg_thread_per_observer);
+     }
+     
+     // Process mode analysis
+     if (process_count > 0) {
+         fprintf(report_file, "Process Mode Analysis:\n");
+         fprintf(report_file, "• Total number of voters: %d\n", total_process_voters);
+         fprintf(report_file, "• Total number of observers: %d\n", total_process_observers);
+         fprintf(report_file, "• Total execution time: %.6f seconds\n", total_process_time);
+         fprintf(report_file, "• Average time per voter: %.6f seconds\n", avg_process_per_voter);
+         fprintf(report_file, "• Average time per observer: %.6f seconds\n\n", avg_process_per_observer);
+     }
+     
+     // Performance comparison
+     if (thread_count > 0 && process_count > 0) {
+         double voter_diff_percent = 0;
+         double observer_diff_percent = 0;
+         
+         // Compare per-voter metrics
+         if (avg_thread_per_voter > 0 && avg_process_per_voter > 0) {
+             double voter_diff = avg_thread_per_voter - avg_process_per_voter;
+             voter_diff_percent = (voter_diff / (voter_diff > 0 ? avg_thread_per_voter : avg_process_per_voter)) * 100;
+             
+             fprintf(report_file, "PERFORMANCE COMPARISON:\n");
+             if (avg_thread_per_voter < avg_process_per_voter) {
+                 fprintf(report_file, "• Per Voter: Thread mode is faster by %.6f seconds (%.2f%%)\n", 
+                         -voter_diff, fabs(voter_diff_percent));
+             } else if (avg_process_per_voter < avg_thread_per_voter) {
+                 fprintf(report_file, "• Per Voter: Process mode is faster by %.6f seconds (%.2f%%)\n", 
+                         voter_diff, voter_diff_percent);
+             } else {
+                 fprintf(report_file, "• Per Voter: Both modes have identical performance\n");
+             }
+             
+             // Compare per-observer metrics
+             if (avg_thread_per_observer > 0 && avg_process_per_observer > 0) {
+                 double observer_diff = avg_thread_per_observer - avg_process_per_observer;
+                 observer_diff_percent = (observer_diff / (observer_diff > 0 ? avg_thread_per_observer : avg_process_per_observer)) * 100;
+                 
+                 if (avg_thread_per_observer < avg_process_per_observer) {
+                     fprintf(report_file, "• Per Observer: Thread mode is faster by %.6f seconds (%.2f%%)\n", 
+                             -observer_diff, fabs(observer_diff_percent));
+                 } else if (avg_process_per_observer < avg_thread_per_observer) {
+                     fprintf(report_file, "• Per Observer: Process mode is faster by %.6f seconds (%.2f%%)\n", 
+                             observer_diff, observer_diff_percent);
+                 } else {
+                     fprintf(report_file, "• Per Observer: Both modes have identical performance\n");
+                 }
+             }
+             
+             // Overall conclusion (average of voter and observer percentages)
+             double overall_percent = (fabs(voter_diff_percent) + fabs(observer_diff_percent)) / 2;
+             fprintf(report_file, "\nOVERALL CONCLUSION:\n");
+             if (voter_diff_percent > 0 && observer_diff_percent > 0) {
+                 fprintf(report_file, "Processes were faster than threads by %.2f%%.\n", overall_percent);
+             } else if (voter_diff_percent < 0 && observer_diff_percent < 0) {
+                 fprintf(report_file, "Threads were faster than processes by %.2f%%.\n", overall_percent);
+             } else {
+                 fprintf(report_file, "Mixed results: one mode was faster for voters, the other for observers.\n");
+             }
+         }
+     }
+     
+     fprintf(report_file, "\n=================================================\n");
+     fprintf(report_file, "END OF PERFORMANCE ANALYSIS\n");
+     fprintf(report_file, "=================================================\n");
+     
+     fclose(report_file);
+     
+     // Display condensed results on console
+     printf("\n📊 === Performance Comparison ===\n");
+     
+     if (thread_count > 0) {
+         printf("Thread Mode:\n");
+         printf("• Total voters: %d, Total observers: %d\n", total_thread_voters, total_thread_observers);
+         printf("• Avg time per voter: %.6f seconds\n", avg_thread_per_voter);
+         printf("• Avg time per observer: %.6f seconds\n\n", avg_thread_per_observer);
+     }
+     
+     if (process_count > 0) {
+         printf("Process Mode:\n");
+         printf("• Total voters: %d, Total observers: %d\n", total_process_voters, total_process_observers);
+         printf("• Avg time per voter: %.6f seconds\n", avg_process_per_voter);
+         printf("• Avg time per observer: %.6f seconds\n\n", avg_process_per_observer);
+     }
+     
+     if (thread_count > 0 && process_count > 0) {
+         if (avg_thread_per_voter < avg_process_per_voter) {
+             printf("Per Voter: Thread mode is %.2f%% faster\n", 
+                    (avg_process_per_voter - avg_thread_per_voter) / avg_process_per_voter * 100);
          } else {
-             printf("Both methods had identical performance\n");
+             printf("Per Voter: Process mode is %.2f%% faster\n", 
+                    (avg_thread_per_voter - avg_process_per_voter) / avg_thread_per_voter * 100);
+         }
+         
+         if (avg_thread_per_observer < avg_process_per_observer) {
+             printf("Per Observer: Thread mode is %.2f%% faster\n", 
+                    (avg_process_per_observer - avg_thread_per_observer) / avg_process_per_observer * 100);
+         } else {
+             printf("Per Observer: Process mode is %.2f%% faster\n", 
+                    (avg_thread_per_observer - avg_process_per_observer) / avg_thread_per_observer * 100);
          }
      }
      
-     printf("\nFinal Vote Tally:\n");
-     for (int i = 0; i < voting_data->candidate_count; i++) {
-         printf("%s: %d", voting_data->candidate_names[i], voting_data->votes[i]);
-         if (i < voting_data->candidate_count - 1) {
-             printf(" | ");
-         }
-     }
-     printf("\n");
+     printf("\nPerformance report saved to: %s\n", comparison_log);
+     printf("===========================\n");
  }
  
  int main(int argc, char *argv[]) {
@@ -1116,6 +1396,9 @@
      
      // Initialize resources
      initialize_resources();
+     
+     // Initialize performance data file if needed
+     initialize_performance_file();
      
      printf("===== SYNCHRONIZED VOTING SYSTEM =====\n");
      printf("1. Manual Mode\n");

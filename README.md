@@ -1,114 +1,117 @@
-# 🗳️ Voting System with Readers-Writers Synchronization (C/Linux)
+# 🗳️ Synchronized Voting System (C/Linux)
 
 This C program implements a **voting system** that demonstrates the classic **Readers-Writers synchronization problem** using **POSIX threads**, **semaphores**, and **shared memory** on **Linux**.
 
+> **Developed as part of the Operating Systems course in the Software Engineering program at FAST NUCES, Karachi.**
+
 ## 🚀 Features
 
-- ✅ Multiple candidates (up to **5**)
-- ✅ Supports up to **100** voters
-- ✅ Proper synchronization using semaphores
-- ✅ Concurrent **reading** and **writing** access
-- ✅ Reader-preference pattern
-- ✅ Clean resource handling and termination
-- ✅ Both **thread-based** and **process-based** simulations
+- ✅ Multiple candidates (up to **10**)
+- ✅ Supports up to **1000** voters
+- ✅ Advanced synchronization using named semaphores
+- ✅ Concurrent **reading** and **writing** with proper coordination
+- ✅ Reader-preference synchronization pattern
+- ✅ Comprehensive logging system with timestamps
+- ✅ Performance tracking and comparison between modes
+- ✅ Prevention of duplicate voting
+- ✅ Three operation modes: **Manual**, **Thread**, and **Process**
 
 ---
 
 ## 🧠 Core Concepts Used
 
 - **POSIX Threads (`pthread`)**
-- **Semaphores (`sem_t`)**
+- **Named Semaphores (`sem_open`, `sem_wait`, `sem_post`)**
 - **Shared Memory (`shm_open`, `mmap`)**
-- **Processes (`fork`)**
+- **Process Management (`fork`, `waitpid`)**
 - **Readers-Writers Synchronization**
 - **Signal Handling (`SIGINT`)**
+- **File I/O and Performance Tracking**
 
 ---
 
 ## 🔧 Synchronization Approach
 
-- 🧑‍🏫 **Reader-preference** pattern:
-  - Multiple readers can access the data simultaneously.
-  - Writers get **exclusive access**.
-- 🧵 Uses `sem_t`:
-  - `mutex`: protects reader count
-  - `write_lock`: ensures mutual exclusion for writers
+- 🧑‍🏫 **Reader-preference** implementation:
+  - Multiple observers (readers) can view results simultaneously
+  - Voters (writers) get exclusive access
+- 🔒 Uses four semaphores:
+  - `mutex`: Protects access to reader count
+  - `wrt`: Controls write access to voting data
+  - `read_count_sem`: Manages reader count access
+  - `console_sem`: Prevents interleaved console output
 
 ---
 
-## 📂 Functional Overview
+## 📂 System Components
 
-### `initialize_system(int candidate_count, char *candidate_names[])`
+### Resource Management
+- `initialize_resources()`: Sets up semaphores and shared memory
+- `cleanup_resources()`: Releases all system resources
 
-- Sets up the signal handler
-- Creates and initializes:
-  - Shared memory
-  - Semaphores
-  - Candidate vote counters
-- Opens log file
+### Synchronization 
+- `reader_enter()`, `reader_exit()`: Controls observation access
+- `writer_enter()`, `writer_exit()`: Controls vote casting access
 
-### `cleanup_system()`
+### Core Functionality
+- `cast_vote()`: Records votes with proper synchronization
+- `view_results()`: Displays current vote tallies safely
 
-- Releases all system resources:
-  - Unlinks semaphores
-  - Unmaps/unlinks shared memory
-  - Closes log file
+### Operational Modes
+- `manual_mode()`: Interactive CLI for voting
+- `thread_mode()`: Simulates voting using threads
+- `process_mode()`: Simulates voting using separate processes
 
-### `reader_thread(void *arg)`
-
-- Thread function for **reader** operations
-- Follows reader-writer protocol
-- Displays current vote counts (no modifications)
-
-### `writer_thread(void *arg)`
-
-- Thread function for **writer** operations
-- Casts votes for random candidates
-- Checks for duplicates and respects voter limits
-
-### `reader_process(int id)`
-
-- Forked process version of the reader
-- Maps shared memory independently
-- Reads vote counts 5 times before exiting
-
-### `writer_process(int id)`
-
-- Forked process version of the writer
-- Casts 3 votes before exiting
-
-### `log_message(const char *message)`
-
-- Logs timestamped events to a file
-
-### `signal_handler(int sig)`
-
-- Handles `SIGINT` (Ctrl+C)
-- Triggers `cleanup_system()` gracefully
+### Performance Analysis
+- `print_performance_comparison()`: Analyzes thread vs process efficiency
 
 ---
 
 ## 🧪 Simulation Modes
 
 1. **Manual Mode**
-   - View vote counts (Reader)
-   - Cast votes (Writer)
+   - Interactive CLI interface
+   - User manually enters voter and candidate IDs
+   - View live results at any time
 
 2. **Thread-Based Simulation**
-   - Spawns multiple threads for concurrent readers/writers
+   - Creates multiple threads for voters and observers
+   - Automatically simulates concurrent voting
+   - Measures and logs performance metrics
 
 3. **Process-Based Simulation**
-   - Spawns separate processes (via `fork()`) for readers and writers
+   - Uses `fork()` to create child processes for voters and observers 
+   - Demonstrates IPC via shared memory
+   - Allows performance comparison with thread mode
+
+4. **Performance Comparison**
+   - Analyzes efficiency differences between thread and process modes
+   - Generates detailed performance reports
+
+---
+
+## 📊 Logging System
+
+- Creates timestamped log files for each session
+- Records all voting activities with timestamps
+- Maintains separate performance tracking for comparison
+- Generates detailed performance analysis reports
 
 ---
 
 ## ⚙️ Build & Run
 
-### 🔨 Compile
-
+### 🔨 Build
 ```bash
-gcc OS_Project.c -o voting_system -pthread -lrt
+make 
 ```
+
+### 🧹 Clean Up
+```bash
+make clean       # Removes executable and main log
+make clear_logs  # Removes all vote log files
+```
+
 ### ▶️ Run
 ```bash
 ./voting_system
